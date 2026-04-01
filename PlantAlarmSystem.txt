@@ -1,0 +1,213 @@
+// Import Libraries
+
+#include <Wire.h>
+#include <LiquidCrystal_I2C.h>
+
+//Declare Variables
+
+int plantRef = 0; //current plant type reference number
+//Note that the default plant type is vegetable
+String plantType = "Vegetable";
+int alarmMoisture = 31; //critical moisture value
+int minMoisture = 41; //minimum "comfortable" moisture
+int maxMoisture = 81; //maximum "comfortable" moisture
+int medMoisture = 61; //mediant "comfortable" moisture
+int currMoisture = 0; //current moisture level
+
+int pastAlert = 3; //previous thirst status
+int currAlert = 3; //current thirst status
+int intervalCnt = 0;
+
+int dryValue = 600;
+int wetValue = 250;
+unsigned long timeWet = 10000; //calibration time for water
+unsigned long timeDry = 10000; //calibration time for air
+
+LiquidCrystal_I2C lcd(0x27,16,2); //create LCD object
+
+//Create functions
+
+int myMoisture(int reading) {
+	float moisture;
+	moisture = 100.0 - 91.0*(float)(reading - wetValue)/(float)(dryValue - wetValue);
+	int moistureInt;
+	moistureInt = (int)moisture;
+	return moistureInt;
+}
+
+void setPlantType(int reference) {
+	switch (reference) {
+		case 0:
+			plantType = "Vegetable";
+			alarmMoisture = 31;
+			minMoisture = 41;
+			maxMoisture = 81;
+			medMoisture = 61;
+			break;
+		case 1:
+			plantType = "Tree/Shrub";
+			alarmMoisture = 14;
+			minMoisture = 20;
+			maxMoisture = 45;
+			medMoisture = 33;
+			break;
+		case 2:
+			plantType = "Flower";
+			alarmMoisture = 18;
+			minMoisture = 25;
+			maxMoisture = 55;
+			medMoisture = 40;
+			break;
+		case 3:
+			plantType = "Fruit";
+			alarmMoisture = 35;
+			minMoisture = 40;
+			maxMoisture = 60;
+			medMoisture = 50;
+			break;
+	}
+
+	lcd.clear();
+	lcd.setCursor(0,0);
+	lcd.print("New plant type:");
+	lcd.setCursor(0,1);
+	lcd.print(plantType);
+	delay(3000);
+	lcd.clear();
+}
+
+void myThirst(int percent) {
+	pastAlert = currAlert; //update alert value for comparison
+	lcd.clear();
+	if (percent > maxMoisture) {
+		lcd.setCursor(0,0);
+		lcd.print("I'm Drowning!");
+		lcd.setCursor(0,1);
+		lcd.print("No more water!");
+		currAlert = 4;
+		return;
+	} else if (percent > medMoisture) {
+		lcd.setCursor(0,0);
+		lcd.print("I'm doing great");
+		lcd.setCursor(0,1);
+		lcd.print("(^v^)");
+		currAlert = 3;
+		return;
+	} else if (percent > minMoisture) {
+		lcd.setCursor(0,0);
+		lcd.print("I'm alright. Add");
+		lcd.setCursor(0,1);
+		lcd.print("just a small sip");
+		currAlert = 2;
+		return;
+	} else if (percent > alarmMoisture) {
+		lcd.setCursor(0,0);
+		lcd.print("I'm thirsty!");
+		lcd.setCursor(0,1);
+		lcd.print("Water me now!");
+		currAlert = 1;
+		return;
+	} else {
+		lcd.setCursor(0,0);
+		lcd.print("I could wilt!");
+		lcd.setCursor(0,1);
+		lcd.print("WATER ASAP");
+		currAlert = 0;
+		return;
+	}
+}
+
+void setup() {
+	Serial.begin(9600);
+	pinMode(2, INPUT_PULLUP);
+
+	lcd.init();
+	lcd.backlight();
+	lcd.setCursor(0,0);
+	lcd.print("Waking up...");
+	delay(3000);
+	lcd.clear();
+
+	lcd.setCursor(0,0);
+	lcd.print("Let's calibrate!");
+	delay(3000);
+	lcd.clear();
+
+	lcd.setCursor(0,0);
+	lcd.print("Dry sensor");
+	delay(3000);
+	lcd.clear();
+
+	for (unsigned long timeStartDry = millis(); (millis() - timeStartDry) < timeDry;) {
+		dryValue = max(analogRead(A0),dryValue);
+		lcd.setCursor(0,0);
+		lcd.print("Calibrating");
+		lcd.setCursor(0,1);
+		lcd.print("for air ");
+		lcd.print((timeDry-(millis()-timeStartDry))/1000); //display countdown
+		lcd.print("s  ");
+	}
+
+	lcd.clear();
+	lcd.setCursor(0,0);
+	lcd.print("Air value: ");
+	lcd.print(dryValue);
+	delay(3000);
+	lcd.clear();
+
+	lcd.setCursor(0,0);
+	lcd.print("Submerge sensor");
+	delay(3000);
+	lcd.clear();
+
+	for (unsigned long timeStartWet = millis(); (millis() - timeStartWet) < timeWet;) {
+		wetValue = min(analogRead(A0),wetValue);
+		lcd.setCursor(0,0);
+		lcd.print("Calibrating");
+		lcd.setCursor(0,1);
+		lcd.print("for water ");
+		lcd.print((timeWet-(millis()-timeStartWet))/1000);
+		lcd.print("s  ");
+	}
+
+	lcd.clear();
+	lcd.setCursor(0,0);
+	lcd.print("Wet value: ");
+	lcd.print(wetValue);
+	delay(3000);
+	lcd.clear();
+
+	lcd.setCursor(0,0);
+	lcd.print("Calibration");
+	lcd.setCursor(0,1);
+	lcd.print("complete");
+	delay(3000);
+	lcd.clear();
+}
+
+void loop() {
+	int sensorVal = digitalRead(2);
+	long sensTotal = 0;
+	int samp = 50;
+
+	if (sensorVal == LOW) {
+		if (plantRef == 3) {
+			plantRef = 0;
+		} else {
+			plantRef += 1;
+		}
+		setPlantType(plantRef);
+	} else {
+		myThirst(currMoisture);
+		for (int i = 0; i < samp; i++) {
+			sensTotal += analogRead(A0);
+			delay(100);
+		}
+		int sensAvg = sensTotal/samp;
+
+		currMoisture = myMoisture(sensAvg); //update moisture % value
+		myThirst(currMoisture); //update screen status
+		delay(3000);
+		lcd.clear();
+	}
+}
